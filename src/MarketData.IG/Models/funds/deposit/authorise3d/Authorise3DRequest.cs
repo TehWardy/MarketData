@@ -1,0 +1,17 @@
+namespace MarketData.IG.Models.funds.deposit.authorise3d
+{
+
+    public class Authorise3DRequest
+    {
+        ///<Summary>
+        ///Payment Authentication Response string
+        ///todo expand
+        ///</Summary>
+        public string pares { get; set; }
+        ///<Summary>
+        ///Comma separated merchant specific details, such as: merchantReference,cardScheme,siteId
+        ///todo example
+        ///</Summary>
+        public string merchantSpecificData { get; set; }
+    }
+}

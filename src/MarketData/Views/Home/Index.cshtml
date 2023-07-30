@@ -1,0 +1,270 @@
+﻿<h1>Market Monitor</h1>
+
+<div class="markets">
+    <div class="header">
+        <div class="markets-combo">
+            <input type="text" id="search-input" placeholder="Search markets..."></input>
+            <ul id="results-list"></ul>
+        </div>
+    </div>
+    
+    <table id="marketTable">
+        <thead> 
+            <tr>
+                <th style="width: 100px;">Time</th>
+                <th>Instrument</th>
+                <th style="width: 80px; text-align: right;">Bid</th>
+                <th style="width: 80px; text-align: right;">Offer</th>
+                <th style="width: 80px; text-align: right;">Change</th>
+                <th style="width: 80px; text-align: right;">Change %</th>
+                <th></th>
+            </tr>
+        </thead>
+        <tbody>
+            <!-- Rows will be dynamically inserted here -->
+        </tbody>
+    </table>
+</div>
+<div class="prediction">
+    <div class="chart">
+        <canvas id="historyCanvas" height="300" width="800"></canvas>
+        <canvas id="trendanvas" height="300" width="800"></canvas>
+    </div>
+</div>
+
+<style>
+    html > * { font-size: 14px; }
+
+    .markets { display: inline-block; }
+    .markets > .header { border: solid 1px #ccc; background: #efefef; padding: 5px; }
+
+    .markets-combo { position: relative; width: 300px; }
+    #search-input { width: 100%; box-sizing: border-box; }
+
+    #results-list {
+        border: 1px solid #ccc;
+        max-height: 150px;
+        overflow-y: auto;
+        position: absolute;
+        top: 100%;
+        width: 100%;
+        display: none;
+        list-style-type: none;
+        margin: 0;
+        padding: 0;
+        background: #fff;
+    }
+
+    #results-list li { padding: 5px; cursor: pointer; }
+    #results-list li:hover { background-color: #eee; }
+
+    table { border-collapse: collapse; }
+    th    { text-align: left; border: solid 1px #ccc; padding: 4px; background: #efefef; }
+    td    { border: solid 1px #ccc; padding: 4px; }
+</style>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/microsoft-signalr/7.0.5/signalr.min.js"></script>
+<script async type="text/javascript">
+    const searchInput = document.getElementById('search-input');
+    const resultsList = document.getElementById('results-list');
+    var connection;
+
+    var getOptions = {
+        method: 'GET',
+        headers: { 'Content-Type': 'application/json' }
+    };
+
+    async function init() {
+        console.log("Initialising");
+        connection = new signalR.HubConnectionBuilder()
+            .withUrl("hubs/markets")
+            .build();
+            
+        await initSearch();
+        await initStreaming();
+        console.log("Ready");
+    }
+
+    async function apiGet(query) {
+        return await fetch(query, getOptions)
+            .then(response => response.json());
+    }
+
+    function addMarket(market) {
+        console.log(market);
+        searchInput.value = "";
+        resultsList.style.display = 'none';
+
+        connection.invoke("Subscribe", market.epic)
+            .catch(err => console.error(err));
+    }
+
+    function removeMarket(epic) {
+        connection.invoke("Unsubscribe", epic)
+            .catch(err => console.error(err));
+    }
+
+    async function initSearch() {
+        searchInput.addEventListener('input', debounce(onMarketSearch, 1000));
+    }
+
+    async function onMarketSearch(e) {
+        const searchTerm = e.target.value;
+
+        if (searchTerm.trim() === "") {
+            resultsList.style.display = 'none';
+            return;
+        }
+
+        const markets = await apiGet("Markets/Search?term=" + searchTerm);
+        console.log(markets);
+
+        // Clear previous results
+        resultsList.innerHTML = '';
+
+        for (const market of markets) {
+            const listItem = document.createElement('li');
+            listItem.textContent = market.instrumentName;
+            listItem.dataset.value = market.epic;
+
+            // Add a click event to each list item
+            listItem.addEventListener('click', (e) => addMarket(market));
+            resultsList.appendChild(listItem);
+        }
+
+        resultsList.style.display = markets.length > 0
+            ? 'block'
+            : 'none';
+    }
+
+    async function initStreaming() {
+        connection.on("MarketUpdate", function (messageType, message) {
+            if(messageType == "Update") {
+                updateMarketDetails(message);
+            }
+
+            if (messageType == "Unsubscribed") {
+                removeMarketDetails(message);
+            }
+        });
+
+        await connection.start();
+    }
+
+    function removeMarketDetails(epic) {
+        const tableBody = document.querySelector('#marketTable tbody');
+
+        let row = Array
+            .from(tableBody.rows)
+            .find(r => r.id === epic);
+
+        if (tableBody && row) {
+            tableBody.removeChild(row);
+        }
+    }
+
+    function updateMarketDetails(details) {
+        const tableBody = document.querySelector('#marketTable tbody');
+
+        var epic = details.itemName.split(':')[1];
+
+        // Try to find an existing row for the item
+        let row = Array
+            .from(tableBody.rows)
+            .find(r => r.id === epic);
+
+        // If the row doesn't exist, create it
+        if (!row) {
+            const newRowHtml = `
+                <tr id="${epic}">
+                    <td>${details.updateTime}</td>
+                    <td style="cursor: pointer;" onclick="getPrediction('${epic}')">${details.itemName}</td>
+                    <td style="text-align: right;">${details.bid}</td>
+                    <td style="text-align: right;">${details.offer}</td>
+                    <td style="text-align: right;">${details.change}</td>
+                    <td style="text-align: right;">${details.changePct}</td>
+                    <td style="text-align: right;"><button onclick="removeMarket('${epic}')">Remove</button></td>
+                </tr>
+            `;
+            tableBody.innerHTML += newRowHtml;
+        } else {
+            // Update the row with the new details
+            row.innerHTML = `
+                <td>${details.updateTime}</td>
+                <td style="cursor: pointer;" onclick="getPrediction('${epic}')">${details.itemName}</td>
+                <td style="text-align: right;">${details.bid}</td>
+                <td style="text-align: right;">${details.offer}</td>
+                <td style="text-align: right;">${details.change}</td>
+                <td style="text-align: right;">${details.changePct}</td>
+                <td style="text-align: right;"><button onclick="removeMarket('${epic}')">Remove</button></td>
+            `;
+        }
+    }
+
+    function debounce(func, wait) {
+        let timeout;
+        return function (...args) {
+            clearTimeout(timeout);
+            timeout = setTimeout(() => func.apply(this, args), wait);
+        };
+    }
+
+    async function getPrediction(epic) {
+        var threeMonthsAgo = new Date();
+        threeMonthsAgo.setMonth(threeMonthsAgo.getMonth() - 3);
+        var from = threeMonthsAgo.toISOString().split('T')[0];
+
+        var tomorrow = new Date();
+        tomorrow.setDate(tomorrow.getDate() + 1);
+        var to = tomorrow.toISOString().split('T')[0];
+        
+        var history = await apiGet(`Markets/History?epic=${epic}&resolution=HOUR&startDate=${from}&endDate=${to}`);
+        var trend = await apiGet(`Markets/TrendLine?epic=${epic}&resolution=HOUR`);
+        buildPredictionChart(history.map(i => i.highPrice.bid), trend);
+    }
+
+    function buildPredictionChart(historyValues, trendValues) {
+        console.log({ history: historyValues, trend: trendValues });
+        drawGraph(document.getElementById('historyCanvas'), historyValues);
+        drawGraph(document.getElementById('trendCanvas'), trendValues);
+    }
+
+    function drawGraph(canvas, values) {
+
+        var context = canvas.getContext('2d');
+
+        // Define the graph data
+        var dataSets = [ values ];
+
+        // Set up graph properties
+        var graphWidth = canvas.width - 40;
+        var graphHeight = canvas.height - 40;
+        var columnWidth = graphWidth / dataSets[0].length;
+        var lineColors = ['red', 'green', 'blue']; // Colors for each line
+
+        // Clear canvas
+        context.clearRect(0, 0, canvas.width, canvas.height);
+
+        // Draw the graph for each line
+        for (var i = 0; i < dataSets.length; i++) {
+
+            var data = dataSets[i];
+            var lineColor = lineColors[i];
+
+            context.beginPath();
+            context.strokeStyle = lineColor;
+
+            context.moveTo(20, canvas.height - 20);
+
+            for (var j = 0; j < data.length; j++) {
+                var x = 20 + j * columnWidth;
+                var y = canvas.height - 20 - (data[j] * (graphHeight / 50));
+                context.lineTo(x, y);
+            }
+
+            context.stroke();
+        }
+    }
+
+    document.addEventListener("DOMContentLoaded", init);
+</script>
